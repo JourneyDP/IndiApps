@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JourneyDP/IndiApps/core/indiapps-core-v0.1.schema.json",
+  "title": "IndiApps core schema v0.1 (DRAFT, not accepted)",
+  "description": "Mandatory foundation for all IndiApps sub-solutions. A sub-solution is a Pack that encodes its ontology and workflows using these shapes. Runtime records (EconomicEvent, Commitment, Mandate, Message, BoundaryRecord) are carried as the payload of an IndilumeApp event envelope 2.0.0; the envelope's own fields (eventId, orgId, hash and so on) are not repeated here.",
+  "$ref": "#/$defs/Pack",
+  "$defs": {
+    "Id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "Quantity": {
+      "description": "A value with its own unit. Units are never fixed on a resource (D6).",
+      "type": "object",
+      "required": ["value", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "$ref": "#/$defs/Id" }
+      }
+    },
+    "Provenance": {
+      "description": "Who proposed an element and on what evidence (D10).",
+      "type": "object",
+      "required": ["origin"],
+      "additionalProperties": false,
+      "properties": {
+        "origin": { "enum": ["human", "ai-proposed", "accepted", "parked"] },
+        "source": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "if": { "properties": { "origin": { "const": "ai-proposed" } } },
+      "then": { "required": ["origin", "source", "confidence"] }
+    },
+    "Dimension": {
+      "type": "object",
+      "required": ["dimensionId", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "dimensionId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Unit": {
+      "type": "object",
+      "required": ["unitId", "dimensionId", "symbol"],
+      "additionalProperties": false,
+      "properties": {
+        "unitId": { "$ref": "#/$defs/Id" },
+        "dimensionId": { "$ref": "#/$defs/Id" },
+        "symbol": { "type": "string" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Conversion": {
+      "description": "1 fromUnit = factor toUnit. Across dimensions only when resourceTypeId is given (a declared bridge, for example hours of labour to dollars).",
+      "type": "object",
+      "required": ["fromUnit", "toUnit", "factor"],
+      "additionalProperties": false,
+      "properties": {
+        "fromUnit": { "$ref": "#/$defs/Id" },
+        "toUnit": { "$ref": "#/$defs/Id" },
+        "factor": { "type": "number", "exclusiveMinimum": 0 },
+        "resourceTypeId": { "$ref": "#/$defs/Id" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "ConsumptionRule": {
+      "description": "Declarative loss over time (D7). The engine turns these into ordinary consume events tagged with ruleId.",
+      "type": "object",
+      "required": ["ruleId", "kind", "dimensionId"],
+      "additionalProperties": false,
+      "properties": {
+        "ruleId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["elapsed-time", "depreciation", "shrinkage", "half-life", "expiry"] },
+        "dimensionId": { "$ref": "#/$defs/Id" },
+        "parameters": { "type": "object" }
+      }
+    },
+    "ResourceType": {
+      "type": "object",
+      "required": ["resourceTypeId", "name", "dimensions", "tracking"],
+      "additionalProperties": false,
+      "properties": {
+        "resourceTypeId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "dimensions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } },
+        "tracking": { "description": "pooled = a balance; lot = batches; instance = individually identified.", "enum": ["pooled", "lot", "instance"] },
+        "consumptionRules": { "type": "array", "items": { "$ref": "#/$defs/ConsumptionRule" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "InformationRecordType": {
+      "description": "A kind of 'master file' record: customer, supplier, compliance body, competitor, the organisation itself.",
+      "type": "object",
+      "required": ["recordTypeId", "name", "changeClass"],
+      "additionalProperties": false,
+      "properties": {
+        "recordTypeId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string" },
+        "changeClass": { "enum": ["static", "occasional", "scheduled", "workflow-driven"] },
+        "isParty": { "type": "boolean", "description": "True when records of this type can act or be dealt with (customers, suppliers, regulators)." },
+        "attributes": { "type": "object", "description": "A JSON Schema fragment for this record type's fields.", "additionalProperties": true },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Flow": {
+      "description": "One resource movement at a workflow node.",
+      "type": "object",
+      "required": ["action", "resourceTypeId"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["consume", "use", "commit", "produce", "transfer-in", "transfer-out"] },
+        "resourceTypeId": { "$ref": "#/$defs/Id" },
+        "quantity": { "$ref": "#/$defs/Quantity" }
+      }
+    },
+    "Node": {
+      "description": "A step in a workflow. family, operation and onFailure match the existing IndilumeApp workflow step shape.",
+      "type": "object",
+      "required": ["nodeId", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["task", "decision", "wait", "branch", "spawn", "message"] },
+        "name": { "type": "string" },
+        "performer": { "enum": ["human", "agent", "either"] },
+        "family": { "type": "string" },
+        "operation": { "type": "string" },
+        "input": { "type": "object" },
+        "onFailure": { "type": "string" },
+        "flows": { "type": "array", "items": { "$ref": "#/$defs/Flow" } },
+        "next": { "type": "array", "items": { "$ref": "#/$defs/Id" } },
+        "spawn": {
+          "type": "object",
+          "required": ["workflowRef", "target"],
+          "additionalProperties": false,
+          "properties": {
+            "workflowRef": { "type": "string" },
+            "target": { "enum": ["internal", "external"] }
+          }
+        }
+      },
+      "if": { "properties": { "kind": { "const": "spawn" } } },
+      "then": { "required": ["nodeId", "kind", "spawn"] }
+    },
+    "WorkflowDefinition": {
+      "type": "object",
+      "required": ["workflowId", "name", "version", "nodes"],
+      "additionalProperties": false,
+      "properties": {
+        "workflowId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "outputKind": { "type": "string", "description": "Pack-defined: product, sub-assembly, service-experience, governance-occurrence and so on." },
+        "startNode": { "$ref": "#/$defs/Id" },
+        "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Node" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Policies": {
+      "type": "object",
+      "required": ["moneyCapPerAction"],
+      "additionalProperties": false,
+      "properties": {
+        "moneyCapPerAction": { "$ref": "#/$defs/Quantity", "description": "Above this, a human approves every action (D16, D22). Mandatory; a pack cannot remove it." },
+        "extraApprovalTriggers": { "type": "array", "items": { "type": "string" }, "description": "Stricter pack-defined triggers (D16a)." },
+        "mandateGrantors": { "type": "array", "items": { "type": "string" }, "default": ["owner"], "description": "Roles allowed to grant mandates (D17)." }
+      }
+    },
+    "Pack": {
+      "description": "A sub-solution's encoding of its ontology and workflows.",
+      "type": "object",
+      "required": ["packId", "name", "version", "extendsCore", "dimensions", "units", "resourceTypes", "workflows", "policies"],
+      "additionalProperties": false,
+      "properties": {
+        "packId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string" },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "extendsCore": { "const": "0.1" },
+        "dimensions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Dimension" } },
+        "units": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Unit" } },
+        "conversions": { "type": "array", "items": { "$ref": "#/$defs/Conversion" } },
+        "resourceTypes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ResourceType" } },
+        "informationRecordTypes": { "type": "array", "items": { "$ref": "#/$defs/InformationRecordType" } },
+        "workflows": { "type": "array", "items": { "$ref": "#/$defs/WorkflowDefinition" } },
+        "policies": { "$ref": "#/$defs/Policies" }
+      }
+    },
+    "EconomicEvent": {
+      "description": "Payload of an envelope 2.0.0 event: the point in time where a workflow node consumed, committed or produced a resource, branched or spawned.",
+      "type": "object",
+      "required": ["action", "streamId", "streamSeq", "idempotencyKey"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["produce", "consume", "use", "commit", "release", "transfer", "branch", "spawn"] },
+        "streamId": { "type": "string", "description": "Ordering scope: one resource or one workflow run (D2)." },
+        "streamSeq": { "type": "integer", "minimum": 0 },
+        "idempotencyKey": { "type": "string", "minLength": 8 },
+        "resourceTypeId": { "$ref": "#/$defs/Id" },
+        "resourceId": { "type": "string" },
+        "quantity": { "$ref": "#/$defs/Quantity" },
+        "workflowId": { "$ref": "#/$defs/Id" },
+        "runId": { "$ref": "#/$defs/Uuid" },
+        "nodeId": { "$ref": "#/$defs/Id" },
+        "causedByRuleId": { "$ref": "#/$defs/Id" },
+        "commitmentId": { "$ref": "#/$defs/Uuid" },
+        "mandateId": { "$ref": "#/$defs/Uuid" },
+        "humanApprovalRef": { "type": "string" },
+        "boundaryId": { "$ref": "#/$defs/Uuid" },
+        "spawnedRunId": { "$ref": "#/$defs/Uuid" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "enum": ["produce", "consume", "use", "commit", "release", "transfer"] } } },
+          "then": { "required": ["resourceTypeId", "quantity"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "spawn" } } },
+          "then": { "required": ["spawnedRunId"] }
+        }
+      ]
+    },
+    "Commitment": {
+      "description": "A reservation with a lease (D3).",
+      "type": "object",
+      "required": ["commitmentId", "resourceTypeId", "quantity", "heldForRunId", "leaseExpiresAt", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "commitmentId": { "$ref": "#/$defs/Uuid" },
+        "resourceTypeId": { "$ref": "#/$defs/Id" },
+        "resourceId": { "type": "string" },
+        "quantity": { "$ref": "#/$defs/Quantity" },
+        "heldForRunId": { "$ref": "#/$defs/Uuid" },
+        "leaseExpiresAt": { "$ref": "#/$defs/Timestamp" },
+        "status": { "enum": ["held", "fulfilled", "released", "expired"] }
+      }
+    },
+    "Mandate": {
+      "description": "A human pre-approval letting an agent act within limits (D5, D17, D18).",
+      "type": "object",
+      "required": ["mandateId", "grantorPrincipalId", "granteePrincipalId", "actionClasses", "moneyCapPerAction", "expiresAt"],
+      "additionalProperties": false,
+      "properties": {
+        "mandateId": { "$ref": "#/$defs/Uuid" },
+        "grantorPrincipalId": { "$ref": "#/$defs/Uuid" },
+        "granteePrincipalId": { "$ref": "#/$defs/Uuid" },
+        "actionClasses": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "moneyCapPerAction": { "$ref": "#/$defs/Quantity" },
+        "counterparties": { "type": "array", "items": { "type": "string" } },
+        "expiresAt": { "$ref": "#/$defs/Timestamp" },
+        "parentMandateId": { "$ref": "#/$defs/Uuid", "description": "Set when delegated; the child must be narrower than the parent." }
+      }
+    },
+    "Message": {
+      "description": "Typed communication between workflows, humans and agents (D8).",
+      "type": "object",
+      "required": ["messageId", "purpose", "from", "to", "mode"],
+      "additionalProperties": false,
+      "properties": {
+        "messageId": { "$ref": "#/$defs/Uuid" },
+        "purpose": { "enum": ["request", "offer", "accept", "reject", "commit", "notify", "query", "answer"] },
+        "from": { "type": "string" },
+        "to": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "mode": { "enum": ["sync", "async"] },
+        "schemaRef": { "type": "string" },
+        "body": { "type": "object" },
+        "text": { "type": "string", "description": "Human-readable version (the Platform's visible-record rule)." },
+        "inReplyTo": { "$ref": "#/$defs/Uuid" },
+        "runId": { "$ref": "#/$defs/Uuid" }
+      },
+      "anyOf": [{ "required": ["body"] }, { "required": ["text"] }]
+    },
+    "BoundaryRecord": {
+      "description": "Evidence of work crossing to or from another organisation (D11).",
+      "type": "object",
+      "required": ["boundaryId", "direction", "channel", "counterpartyRecordId"],
+      "additionalProperties": false,
+      "properties": {
+        "boundaryId": { "$ref": "#/$defs/Uuid" },
+        "direction": { "enum": ["outbound", "inbound"] },
+        "channel": { "enum": ["adapter", "native"] },
+        "adapterRef": { "type": "string" },
+        "counterpartyRecordId": { "type": "string" },
+        "evidenceRefs": { "type": "array", "items": { "type": "string" } },
+        "remoteWorkflowRef": { "type": "string" }
+      },
+      "if": { "properties": { "channel": { "const": "adapter" } } },
+      "then": { "required": ["boundaryId", "direction", "channel", "counterpartyRecordId", "adapterRef"] }
+    }
+  }
+}
